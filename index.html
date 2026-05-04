@@ -1664,10 +1664,21 @@ function doFinishExam(){
     provScore:earned,provPct:pct,finalScore:null,finalPct:null,finalized:false,
     answers:ES.answers,time:new Date().toLocaleString('ko-KR'),ts:Date.now(),
     elapsed:Math.round((Date.now()-ES.startMs)/1000),studentEmail:ES.student.loginEmail||ES.student.email||''};
+
+  // ★ 재응시 시 기존 결과 자동 삭제 (로컬 + Firebase)
+  var oldResults = DB.results.filter(function(r){ return r.sid===ES.student.id; });
+  oldResults.forEach(function(old){
+    if(FB_READY&&fbDb&&CURRENT_ID){
+      fbDb.ref('/exams/'+CURRENT_ID+'/results/'+old.sid+'_'+old.ts).remove()
+        .catch(function(e){ console.warn('기존 결과 삭제 실패:', e); });
+    }
+  });
+  DB.results = DB.results.filter(function(r){ return r.sid !== ES.student.id; });
+
   DB.results.push(result);
-  saveLocal(); // 로컬만 저장 (results 포함)
-  saveResultToFirebase(result); // Firebase에 결과만 개별 저장 (덮어쓰기 없음)
-  clearProgress(ES.student.id); // 이어보기 임시데이터 삭제
+  saveLocal();
+  saveResultToFirebase(result);
+  clearProgress(ES.student.id);
   document.body.classList.remove('exam-active');
   showStudentResult(result);
 }
