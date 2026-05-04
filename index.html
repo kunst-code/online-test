@@ -2212,7 +2212,8 @@ function saveOneScore(sid,ts,ansIdx){
   r.provScore=r.answers.reduce(function(s,a){return s+a.pts;},0);
   r.provPct=r.total?Math.round(r.provScore/r.total*100):0;
   DB.results=DB.results.map(function(x){return x.sid===sid&&x.ts===ts?r:x;});
-  saveDB();
+  saveLocal();
+  saveResultToFirebase(r); // ★ Firebase 개별 저장
   liveScoreSum();
   // Flash saved
   var btn=event.target;
@@ -2235,7 +2236,9 @@ function finalizeScore(sid,ts){
   r.finalScore=finalScore;r.finalPct=r.total?Math.round(finalScore/r.total*100):0;
   r.finalized=true;
   DB.results=DB.results.map(function(x){return x.sid===sid&&x.ts===ts?r:x;});
-  saveDB();alert('최종 점수가 확정되었습니다: '+finalScore+'점 ('+r.finalPct+'%)');
+  saveLocal();
+  saveResultToFirebase(r); // ★ Firebase에 개별 저장
+  alert('최종 점수가 확정되었습니다: '+finalScore+'점 ('+r.finalPct+'%)');
   showReportDetail(sid,ts);
 }
 
@@ -2266,7 +2269,7 @@ function sendEmail(){
   var score=isFinal?r.finalPct:r.provPct;
   var finalDisp=isFinal?String(r.finalPct)+'점':'(확정 전)';
   r.studentEmail=email;
-  DB.results=DB.results.map(function(x){return x.sid===r.sid&&x.ts===r.ts?r:x;});saveDB();
+  DB.results=DB.results.map(function(x){return x.sid===r.sid&&x.ts===r.ts?r:x;});saveLocal();saveResultToFirebase(r);
   document.getElementById('emailSendBtn').disabled=true;document.getElementById('emailSendBtn').textContent='발송 중...';
   sendEmailJS({
     to_email:email,student_name:r.sname,student_id:r.sid,exam_title:DB.settings.title,
