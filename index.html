@@ -747,11 +747,8 @@ function syncResultsFromFirebase(cb){
   fbDb.ref('/exams/'+CURRENT_ID+'/results').once('value', function(snap){
     var val=snap.val();
     if(val){
-      var fbResults=Object.values(val);
-      fbResults.forEach(function(fr){
-        var exists=DB.results.find(function(r){return r.sid===fr.sid&&r.ts===fr.ts;});
-        if(!exists) DB.results.push(fr);
-      });
+      // Firebase가 항상 최신 — 로컬을 Firebase로 완전히 덮어씀
+      DB.results = Object.values(val);
       EXAMS[CURRENT_ID]=DB;
       saveLocal();
     }
