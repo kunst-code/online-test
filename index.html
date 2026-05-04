@@ -720,16 +720,42 @@ function pullFromFirebase(cb){
 }
 
 // ── saveDB: 로컬+Firebase 동시 저장 ──
+// ★ results는 절대 통째로 덮어쓰지 않음 — 동시 응시 충돌 방지
 function saveDB(){
   if(!CURRENT_ID) return;
   EXAMS[CURRENT_ID]=DB;
   saveLocal();
-  // Firebase에도 해당 시험만 저장
   if(FB_READY&&fbDb){
-    fbDb.ref('/exams/'+CURRENT_ID).set(DB)
-      .catch(function(e){ console.warn('Firebase 저장 실패:', e); });
+    // settings, questions, students만 저장 (results 제외)
+    fbDb.ref('/exams/'+CURRENT_ID+'/settings').set(DB.settings)
+      .catch(function(e){ console.warn('settings 저장 실패:', e); });
+    fbDb.ref('/exams/'+CURRENT_ID+'/questions').set(DB.questions)
+      .catch(function(e){ console.warn('questions 저장 실패:', e); });
+    fbDb.ref('/exams/'+CURRENT_ID+'/students').set(DB.students)
+      .catch(function(e){ console.warn('students 저장 실패:', e); });
+    fbDb.ref('/exams/'+CURRENT_ID+'/title').set(DB.title||DB.settings.title||'')
+      .catch(function(e){ console.warn('title 저장 실패:', e); });
+    // results는 건드리지 않음 — saveResultToFirebase()로만 개별 저장
   }
   renderAll();
+}
+
+// ── results만 Firebase에서 최신 pull해서 로컬 병합 ──
+function syncResultsFromFirebase(cb){
+  if(!FB_READY||!fbDb||!CURRENT_ID){ if(cb)cb(); return; }
+  fbDb.ref('/exams/'+CURRENT_ID+'/results').once('value', function(snap){
+    var val=snap.val();
+    if(val){
+      var fbResults=Object.values(val);
+      fbResults.forEach(function(fr){
+        var exists=DB.results.find(function(r){return r.sid===fr.sid&&r.ts===fr.ts;});
+        if(!exists) DB.results.push(fr);
+      });
+      EXAMS[CURRENT_ID]=DB;
+      saveLocal();
+    }
+    if(cb)cb();
+  }, function(){ if(cb)cb(); });
 }
 
 // ── saveStore: 전체 저장 ──
@@ -781,12 +807,22 @@ function loadExamForStudent(examId, cb){
   }
 }
 
-// ── 학생 결과를 Firebase에 저장 ──
+// ── 학생 결과를 Firebase에 저장 (재시도 3회) ──
 function saveResultToFirebase(result){
-  if(FB_READY&&fbDb&&CURRENT_ID){
-    fbDb.ref('/exams/'+CURRENT_ID+'/results/'+result.sid+'_'+result.ts).set(result)
-      .catch(function(e){ console.warn('결과 저장 실패:', e); });
+  if(!FB_READY||!fbDb||!CURRENT_ID) return;
+  var path='/exams/'+CURRENT_ID+'/results/'+result.sid+'_'+result.ts;
+  var attempt=0;
+  function doSave(){
+    attempt++;
+    fbDb.ref(path).set(result)
+      .then(function(){ console.log('결과 저장 완료:', result.sname); })
+      .catch(function(e){
+        console.warn('결과 저장 실패 ('+attempt+'회):', e);
+        if(attempt<3) setTimeout(doSave, 2000*attempt); // 2초, 4초 후 재시도
+        else console.error('결과 저장 최종 실패:', result.sname);
+      });
   }
+  doSave();
 }
 
 // ── 변수 ──
@@ -1628,8 +1664,8 @@ function doFinishExam(){
     answers:ES.answers,time:new Date().toLocaleString('ko-KR'),ts:Date.now(),
     elapsed:Math.round((Date.now()-ES.startMs)/1000),studentEmail:ES.student.loginEmail||ES.student.email||''};
   DB.results.push(result);
-  saveDB();
-  saveResultToFirebase(result); // Firebase에 결과 저장
+  saveLocal(); // 로컬만 저장 (results 포함)
+  saveResultToFirebase(result); // Firebase에 결과만 개별 저장 (덮어쓰기 없음)
   clearProgress(ES.student.id); // 이어보기 임시데이터 삭제
   document.body.classList.remove('exam-active');
   showStudentResult(result);
@@ -1767,25 +1803,10 @@ function grade(pct){
 // REPORTS (출제자 전용)
 // ============================================================
 function renderReports(){
-  // Firebase에서 최신 결과 동기화
-  if(FB_READY&&fbDb&&CURRENT_ID){
-    fbDb.ref('/exams/'+CURRENT_ID+'/results').once('value', function(snap){
-      var val=snap.val();
-      if(val){
-        // Firebase 결과와 로컬 결과 병합 (중복 제거)
-        var fbResults = toArr(val);
-        fbResults.forEach(function(fr){
-          var exists = DB.results.find(function(r){return r.sid===fr.sid&&r.ts===fr.ts;});
-          if(!exists) DB.results.push(fr);
-        });
-        EXAMS[CURRENT_ID]=DB;
-        saveLocal();
-      }
-      _doRenderReports();
-    }, function(){ _doRenderReports(); });
-  } else {
+  // Firebase에서 최신 results 항상 pull 후 렌더
+  syncResultsFromFirebase(function(){
     _doRenderReports();
-  }
+  });
 }
 
 function _doRenderReports(){
