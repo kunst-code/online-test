@@ -595,6 +595,7 @@ textarea{resize:vertical;}
   <div class="sec-sub">응시 완료 학생의 성적을 확인하고 최종 점수를 확정합니다</div>
   <div class="btn-row" style="margin-bottom:16px;">
     <button class="btn btn-blue" onclick="exportCSV()">CSV 내보내기</button>
+    <button class="btn btn-dark" onclick="reGradeAll()" title="정답 수정 후 기존 응시자 전체 재채점">🔄 전체 재채점</button>
     <button class="btn btn-red" onclick="if(confirm('모든 결과 삭제?'))clearResults()">결과 초기화</button>
   </div>
   <!-- 일괄 PDF 패널 -->
@@ -2293,6 +2294,102 @@ function exportCSV(){
 }
 
 function clearResults(){DB.results=[];saveDB();}
+
+// ── 전체 재채점 ──
+// 정답을 수정한 후 기존 응시자 답안을 새 정답 기준으로 다시 계산
+function reGradeAll(){
+  if(!DB.results||!DB.results.length){alert('응시 결과가 없습니다.');return;}
+  if(!DB.questions||!DB.questions.length){alert('문제가 없습니다.');return;}
+  if(!confirm('현재 문제의 정답을 기준으로 전체 재채점합니다.\n이미 확정된 최종 점수는 변경되지 않습니다.\n계속할까요?')) return;
+
+  var totalPts = DB.questions.reduce(function(s,q){return s+(q.points||1);},0);
+  var changed = 0;
+
+  DB.results = DB.results.map(function(result){
+    // 이미 최종 확정된 경우 건드리지 않음
+    if(result.finalized) return result;
+
+    var newAnswers = result.answers.map(function(ans){
+      var q = DB.questions.find(function(q){return q.id===ans.qid;});
+      if(!q) return ans;
+
+      var ok = false;
+      var pts = 0;
+
+      if(q.type==='mc'){
+        // 객관식: 정답 배열과 비교
+        var correctArr = Array.isArray(q.correct) ? q.correct : [q.correct];
+        var studentArr = Array.isArray(ans.val) ? ans.val : [ans.val];
+        ok = correctArr.length===studentArr.length &&
+             correctArr.every(function(c){ return studentArr.indexOf(c)>-1; });
+      } else if(q.type==='tf'){
+        ok = String(ans.val) === String(q.correct);
+      } else if(q.type==='sa'){
+        // 단답형: fuzzy matching 적용
+        var stuVal = (ans.val||'').toString().trim().toLowerCase();
+        var corrVal = (q.correct||'').toString().trim().toLowerCase();
+        ok = stuVal === corrVal;
+        // 유사도 허용 (editDistance)
+        if(!ok && stuVal.length > 0){
+          var maxLen = Math.max(stuVal.length, corrVal.length);
+          var dist = editDistance(stuVal, corrVal);
+          ok = maxLen > 0 && (dist/maxLen) <= 0.2;
+        }
+      } else if(q.type==='essay'){
+        // 서술형: 자동채점 안 함, 기존 유지
+        return ans;
+      }
+
+      pts = ok ? (q.points||1) : 0;
+
+      return Object.assign({}, ans, {ok:ok, pts:pts});
+    });
+
+    var newEarned = newAnswers.reduce(function(s,a){return s+(a.pts||0);},0);
+    var newPct = totalPts ? Math.round(newEarned/totalPts*100) : 0;
+
+    var prevPct = result.provPct;
+    if(prevPct !== newPct) changed++;
+
+    return Object.assign({}, result, {
+      answers: newAnswers,
+      provScore: newEarned,
+      provPct: newPct,
+      score: newEarned,
+      pct: newPct,
+      total: totalPts
+    });
+  });
+
+  saveLocal();
+
+  // Firebase에 재채점 결과 반영 (개별 저장)
+  if(FB_READY&&fbDb&&CURRENT_ID){
+    DB.results.forEach(function(r){
+      if(!r.finalized){
+        fbDb.ref('/exams/'+CURRENT_ID+'/results/'+r.sid+'_'+r.ts).set(r)
+          .catch(function(e){ console.warn('재채점 저장 실패:', r.sname, e); });
+      }
+    });
+  }
+
+  renderAll();
+  alert('재채점 완료! 총 '+DB.results.length+'명 중 '+changed+'명의 점수가 변경되었습니다.');
+}
+
+// 편집 거리 계산 (단답형 유사도용)
+function editDistance(a, b){
+  var m=a.length, n=b.length;
+  var dp=[];
+  for(var i=0;i<=m;i++){dp[i]=[i];}
+  for(var j=0;j<=n;j++){dp[0][j]=j;}
+  for(var i=1;i<=m;i++){
+    for(var j=1;j<=n;j++){
+      dp[i][j]=a[i-1]===b[j-1]?dp[i-1][j-1]:1+Math.min(dp[i-1][j],dp[i][j-1],dp[i-1][j-1]);
+    }
+  }
+  return dp[m][n];
+}
 
 // ============================================================
 // MEDIA RENDER (exam)
