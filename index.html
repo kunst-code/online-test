@@ -596,6 +596,7 @@ textarea{resize:vertical;}
   <div class="btn-row" style="margin-bottom:16px;">
     <button class="btn btn-blue" onclick="exportCSV()">CSV 내보내기</button>
     <button class="btn btn-dark" onclick="reGradeAll()" title="정답 수정 후 기존 응시자 전체 재채점">🔄 전체 재채점</button>
+    <button class="btn btn-green" onclick="bulkSendFinalEmail()">📧 최종 성적 일괄 이메일</button>
     <button class="btn btn-red" onclick="if(confirm('모든 결과 삭제?'))clearResults()">결과 초기화</button>
   </div>
   <!-- 일괄 PDF 패널 -->
@@ -616,7 +617,7 @@ textarea{resize:vertical;}
       <button class="btn btn-dark" onclick="bulkPrint('answers')">📋 정답지</button>
       <button class="btn btn-blue" onclick="bulkPrint('student')">👤 학생 시험지 (선택된 학생별)</button>
     </div>
-    <div style="font-size:11px;color:#aaa;margin-top:8px;">※ 문제지·정답지는 선택 무관 공통 1부 출력. 학생 시험지는 선택된 학생만 출력됩니다.</div>
+    <div style="font-size:11px;color:#aaa;margin-top:8px;">※ 문제지·정답지는 선택 무관 공통 1부 출력. 학생 시험지는 학생별 개별 PDF 창으로 출력됩니다.</div>
   </div>
   <div id="repArea"></div>
 </div>
@@ -1922,18 +1923,27 @@ function bulkPrint(type){
 
 function printStudentsBulk(selected){
   if(!selected.length){alert('학생을 선택하세요.');return;}
+  if(!confirm(selected.length+'명의 학생 시험지를 각각 개별 PDF 창으로 출력합니다.\n팝업을 허용해주세요.')){return;}
+  selected.forEach(function(sel){
+    var r=DB.results.find(function(x){return x.sid===sel.sid&&x.ts===sel.ts;});
+    if(!r) return;
+    setTimeout(function(){ printStudentSingle(r); }, 300);
+  });
+}
+
+function printStudentSingle(r){
   var w=window.open('','_blank','width=900,height=700');
   if(!w){alert('팝업이 차단되었습니다. 팝업을 허용해주세요.');return;}
   var nums=['①','②','③','④','⑤','⑥'];
   var typemap={mc:'객관식',sa:'단답형',ox:'O/X',es:'서술형'};
   var title=DB.settings.title||'시험';
   var now=new Date().toLocaleDateString('ko-KR');
+  var g=grade(r.finalized?r.finalPct:r.provPct);
 
   var css='<style>'+
     '@import url("https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&display=swap");'+
     'body{font-family:"Noto Sans KR",sans-serif;font-size:13px;color:#1a1a1a;margin:0;padding:0;background:#fff;}'+
-    '.student-section{max-width:740px;margin:0 auto;padding:32px 40px;page-break-after:always;}'+
-    '.student-section:last-child{page-break-after:auto;}'+
+    '.student-section{max-width:740px;margin:0 auto;padding:32px 40px;}'+
     '.doc-header{border-bottom:2px solid #1a1a1a;padding-bottom:14px;margin-bottom:24px;}'+
     '.doc-title{font-size:20px;font-weight:700;margin-bottom:4px;}'+
     '.doc-meta{font-size:12px;color:#666;line-height:1.6;}'+
@@ -1958,106 +1968,96 @@ function printStudentsBulk(selected){
     '@media print{.no-print{display:none!important;}body{print-color-adjust:exact;-webkit-print-color-adjust:exact;}}'+
   '</style>';
 
-  var allHtml='';
-  selected.forEach(function(sel){
-    var r=DB.results.find(function(x){return x.sid===sel.sid&&x.ts===sel.ts;});
-    if(!r) return;
-    var g=grade(r.finalized?r.finalPct:r.provPct);
-    var section='<div class="student-section">'+
-      '<div class="doc-header">'+
-        '<div class="doc-title">'+escHtml(title)+
-          ' <span style="font-size:14px;font-weight:400;color:#666;">개인 시험지</span>'+
-          (r.finalized?'<span class="stamp final">최종 확정</span>':'<span class="stamp">가점수</span>')+
-        '</div>'+
-        '<div class="doc-meta">'+
-          '학번: <b>'+escHtml(r.sid)+'</b> &nbsp;|&nbsp; 이름: <b>'+escHtml(r.sname)+'</b> &nbsp;|&nbsp; 응시: '+r.time+' &nbsp;|&nbsp; 소요: '+r.elapsed+'초'+
-        '</div>'+
-        '<table class="score-summary" style="margin-top:10px;">'+
-          '<tr><th>가 점수</th><th>최종 점수</th><th>만점</th><th>등급</th></tr>'+
-          '<tr>'+
-            '<td>'+r.provPct+'점</td>'+
-            '<td style="font-weight:700;color:'+g.c+';">'+(r.finalized?r.finalPct+'점':'확정 전')+'</td>'+
-            '<td>'+r.total+'점</td>'+
-            '<td style="font-weight:700;color:'+g.c+';">'+g.g+'</td>'+
-          '</tr>'+
-        '</table>'+
-      '</div>';
+  var _n=function(s){return(s||'').toString().toLowerCase().replace(/\s+/g,'').replace(/[.,!?\-]/g,'');};
+  var section='<div class="student-section">'+
+    '<div class="doc-header">'+
+      '<div class="doc-title">'+escHtml(title)+
+        ' <span style="font-size:14px;font-weight:400;color:#666;">개인 시험지</span>'+
+        (r.finalized?'<span class="stamp final">최종 확정</span>':'<span class="stamp">가점수</span>')+
+      '</div>'+
+      '<div class="doc-meta">'+
+        '학번: <b>'+escHtml(r.sid)+'</b> &nbsp;|&nbsp; 이름: <b>'+escHtml(r.sname)+'</b> &nbsp;|&nbsp; 응시: '+r.time+' &nbsp;|&nbsp; 소요: '+r.elapsed+'초'+
+      '</div>'+
+      '<table class="score-summary" style="margin-top:10px;">'+
+        '<tr><th>가 점수</th><th>최종 점수</th><th>만점</th><th>등급</th></tr>'+
+        '<tr>'+
+          '<td>'+r.provPct+'점</td>'+
+          '<td style="font-weight:700;color:'+g.c+';">'+(r.finalized?r.finalPct+'점':'확정 전')+'</td>'+
+          '<td>'+r.total+'점</td>'+
+          '<td style="font-weight:700;color:'+g.c+';">'+g.g+'</td>'+
+        '</tr>'+
+      '</table>'+
+    '</div>';
 
-    r.answers.forEach(function(a,i){
-      var q=DB.questions.find(function(x){return x.id===a.qid;})||DB.questions[a.qi]||{text:'Q'+(i+1),points:0,type:a.type,opts:[],ans:0};
-      var isPend=a.pendingManual, isTO=a.timeout;
-      // ok 필드 대신 현재 정답과 직접 비교
-      var isOk=false;
-      if(isPend||isTO){ isOk=false; }
-      else if(q.type==='mc'||q.type==='ox'){ isOk=(a.given===q.ans); }
+  r.answers.forEach(function(a,i){
+    var q=DB.questions.find(function(x){return x.id===a.qid;})||DB.questions[a.qi]||{text:'Q'+(i+1),points:0,type:a.type,opts:[],ans:0};
+    var isPend=a.pendingManual, isTO=a.timeout;
+    var isOk=false;
+    if(!isPend&&!isTO){
+      if(q.type==='mc'||q.type==='ox') isOk=(a.given===q.ans);
       else if(q.type==='sa'){
-        var _n=function(s){return(s||'').toString().toLowerCase().replace(/\s+/g,'').replace(/[.,!?\-]/g,'');};
         isOk=(_n(a.given)===_n(q.ans));
-        if(!isOk&&q.aliases){ q.aliases.forEach(function(al){if(_n(a.given)===_n(al))isOk=true;}); }
-      }
-      else if(q.type==='es'){ isOk=a.ok; }
-      var chipCls=isPend?'pend':isOk?'ok':'bad';
-      var chipTxt=isPend?'채점 대기':(isOk?'✓ 정답 '+a.pts+'점':'✗ 오답 '+a.pts+'점');
-      section+='<div class="q-block">'+
-        '<div class="q-num">Q'+(i+1)+' ['+typemap[q.type]+']'+
-          ' <span class="q-pts">'+q.points+'점</span>'+
-          ' <span class="score-chip '+chipCls+'">'+chipTxt+'</span>'+
-          (a.fuzzy&&a.ok?' <span class="score-chip" style="color:#92400e;border-color:#fde68a;background:#fffbeb;">유사정답</span>':'')+
-          (isTO?' <span class="score-chip bad">⏱ 시간초과</span>':'')+
-        '</div>'+
-        '<div class="q-text">'+escHtml(q.text)+'</div>';
+        if(!isOk&&q.aliases) q.aliases.forEach(function(al){if(_n(a.given)===_n(al))isOk=true;});
+      } else if(q.type==='es') isOk=a.ok;
+    }
+    var chipCls=isPend?'pend':isOk?'ok':'bad';
+    var chipTxt=isPend?'채점 대기':(isOk?'✓ 정답 '+a.pts+'점':'✗ 오답 '+a.pts+'점');
+    section+='<div class="q-block">'+
+      '<div class="q-num">Q'+(i+1)+' ['+typemap[q.type]+']'+
+        ' <span class="q-pts">'+q.points+'점</span>'+
+        ' <span class="score-chip '+chipCls+'">'+chipTxt+'</span>'+
+        (isTO?' <span class="score-chip bad">⏱ 시간초과</span>':'')+
+      '</div>'+
+      '<div class="q-text">'+escHtml(q.text)+'</div>';
 
-      if(q.media&&q.media.type==='image')
-        section+='<img src="'+q.media.data+'" style="max-width:100%;max-height:160px;border-radius:6px;margin-bottom:8px;"/>';
+    if(q.media&&q.media.type==='image')
+      section+='<img src="'+q.media.data+'" style="max-width:100%;max-height:160px;border-radius:6px;margin-bottom:8px;"/>';
 
-      if(q.type==='mc'){
-        (q.opts||[]).forEach(function(o,j){
-          var isCh=a.given===j, isCo=q.ans===j;
-          var style='display:block;padding:4px 8px;border-radius:4px;margin-bottom:3px;font-size:13px;';
-          if(isCh&&isCo) style+='background:#d8f3dc;font-weight:700;';
-          else if(isCh&&!isCo) style+='background:#fdf2f2;text-decoration:line-through;color:#922b21;';
-          else if(!isCh&&isCo&&!isOk) style+='background:#d8f3dc;font-weight:700;';
-          section+='<span style="'+style+'">'+nums[j]+' '+escHtml(o)+'</span>';
-          if(q.optImgs&&q.optImgs[j]) section+='<img src="'+q.optImgs[j]+'" style="max-width:100px;border-radius:4px;margin:2px 0 4px 22px;display:block;"/>';
-        });
-      } else if(q.type==='sa'){
-        section+='<div class="ans-area'+(isOk?' ok':isTO?'':' bad')+'">'+
-          '제출: '+(a.given?escHtml(a.given):'(미제출)')+
-        '</div>';
-        if(!isOk&&!isTO) section+='<div style="font-size:12px;color:#922b21;margin-top:4px;">정답: '+escHtml(q.ans||'')+'</div>';
-      } else if(q.type==='ox'){
-        section+='<div style="display:flex;gap:12px;margin-top:4px;">';
-        ['O','X'].forEach(function(v){
-          var isCh=a.given===v, isCo=q.ans===v;
-          var s='width:52px;text-align:center;padding:8px;border-radius:6px;font-size:20px;font-weight:700;border:1.5px solid #ddd;';
-          if(isCh&&isCo) s+='background:#d8f3dc;border-color:#1b4332;';
-          else if(isCh&&!isCo) s+='background:#fdf2f2;border-color:#922b21;text-decoration:line-through;color:#922b21;';
-          else if(!isCh&&isCo&&!isOk) s+='background:#d8f3dc;border-color:#1b4332;border-style:dashed;';
-          section+='<div style="'+s+'">'+v+'</div>';
-        });
-        section+='</div>';
-      } else {
-        section+='<div class="essay-area">'+escHtml(a.given||'(미제출)')+'</div>'+
-          (q.crit?'<div style="font-size:11px;color:#5b21b6;margin-top:4px;">채점기준: '+escHtml(q.crit)+'</div>':'');
-      }
+    if(q.type==='mc'){
+      (q.opts||[]).forEach(function(o,j){
+        var isCh=a.given===j, isCo=q.ans===j;
+        var style='display:block;padding:4px 8px;border-radius:4px;margin-bottom:3px;font-size:13px;';
+        if(isCh&&isCo) style+='background:#d8f3dc;font-weight:700;';
+        else if(isCh&&!isCo) style+='background:#fdf2f2;text-decoration:line-through;color:#922b21;';
+        else if(!isCh&&isCo&&!isOk) style+='background:#d8f3dc;font-weight:700;';
+        section+='<span style="'+style+'">'+nums[j]+' '+escHtml(o)+'</span>';
+      });
+    } else if(q.type==='sa'){
+      section+='<div class="ans-area'+(isOk?' ok':isTO?'':' bad')+'">제출: '+(a.given?escHtml(a.given):'(미제출)')+'</div>';
+      if(!isOk&&!isTO) section+='<div style="font-size:12px;color:#922b21;margin-top:4px;">정답: '+escHtml(q.ans||'')+'</div>';
+    } else if(q.type==='ox'){
+      section+='<div style="display:flex;gap:12px;margin-top:4px;">';
+      ['O','X'].forEach(function(v){
+        var isCh=a.given===v, isCo=q.ans===v;
+        var s='width:52px;text-align:center;padding:8px;border-radius:6px;font-size:20px;font-weight:700;border:1.5px solid #ddd;';
+        if(isCh&&isCo) s+='background:#d8f3dc;border-color:#1b4332;';
+        else if(isCh&&!isCo) s+='background:#fdf2f2;border-color:#922b21;color:#922b21;';
+        else if(!isCh&&isCo&&!isOk) s+='background:#d8f3dc;border-color:#1b4332;border-style:dashed;';
+        section+='<div style="'+s+'">'+v+'</div>';
+      });
       section+='</div>';
-    });
+    } else {
+      section+='<div class="essay-area">'+escHtml(a.given||'(미제출)')+'</div>'+
+        (q.crit?'<div style="font-size:11px;color:#5b21b6;margin-top:4px;">채점기준: '+escHtml(q.crit)+'</div>':'');
+    }
     section+='</div>';
-    allHtml+=section;
   });
+  section+='</div>';
 
-  w.document.write('<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><title>학생 시험지 일괄 출력</title>'+css+
+  var filename=r.sid+'_'+r.sname;
+  w.document.write('<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><title>'+filename+'</title>'+css+
     '</head><body>'+
     '<div class="no-print" style="position:fixed;top:0;left:0;right:0;background:#1a1a1a;color:#fff;padding:10px 20px;'+
       'display:flex;align-items:center;gap:12px;z-index:999;">'+
-      '<span style="font-size:14px;font-weight:700;">학생 시험지 ('+selected.length+'명)</span>'+
-      '<button onclick="window.print()" style="padding:6px 18px;background:#fff;color:#1a1a1a;border:none;border-radius:6px;font-weight:700;cursor:pointer;font-size:13px;">🖨 PDF 저장</button>'+
+      '<span style="font-size:14px;font-weight:700;">'+escHtml(r.sid)+' '+escHtml(r.sname)+'</span>'+
+      '<button onclick="window.print()" style="padding:6px 18px;background:#fff;color:#1a1a1a;border:none;border-radius:6px;font-weight:700;cursor:pointer;font-size:13px;">🖨 PDF 저장 ('+filename+')</button>'+
       '<button onclick="window.close()" style="padding:6px 14px;background:transparent;color:#ccc;border:1px solid #555;border-radius:6px;cursor:pointer;font-size:13px;">닫기</button>'+
-      '<span style="font-size:11px;color:#aaa;">인쇄 대화상자에서 "PDF로 저장" 선택 | 학생별 페이지 자동 구분</span>'+
+      '<span style="font-size:11px;color:#aaa;">저장 시 파일명: '+filename+'.pdf</span>'+
     '</div>'+
-    '<div style="height:50px;"></div>'+allHtml+'</body></html>');
+    '<div style="height:50px;"></div>'+section+'</body></html>');
   w.document.close();
 }
+
 
 function showReportDetail(sid, ts){
   var r=DB.results.find(function(x){return x.sid===sid&&x.ts===ts;});
@@ -2315,6 +2315,53 @@ function exportCSV(){
 }
 
 function clearResults(){DB.results=[];saveDB();}
+
+// ── 최종 성적 일괄 이메일 발송 ──
+function bulkSendFinalEmail(){
+  if(!DB.results||!DB.results.length){alert('응시 결과가 없습니다.');return;}
+  if(!DB.settings.ejsServiceId||!DB.settings.ejsTemplateId||!DB.settings.ejsPublicKey){
+    alert('EmailJS 설정이 없습니다. 출제자 설정에서 EmailJS를 먼저 설정하세요.');return;
+  }
+  var targets = DB.results.filter(function(r){ return r.studentEmail && r.studentEmail.includes('@'); });
+  if(!targets.length){alert('이메일 주소가 등록된 학생이 없습니다.');return;}
+
+  var finalOnly = targets.filter(function(r){ return r.finalized; });
+  var msg = '이메일이 등록된 학생: '+targets.length+'명\n최종 확정 학생: '+finalOnly.length+'명\n\n';
+  if(finalOnly.length<targets.length) msg+='※ 미확정 학생('+(targets.length-finalOnly.length)+'명)에게는 가 점수가 발송됩니다.\n\n';
+  msg += '이메일을 발송할까요?';
+  if(!confirm(msg)) return;
+
+  var baseUrl = 'https://kunst-code.github.io/online-test/#student?exam='+CURRENT_ID;
+  var sent=0, failed=0;
+
+  targets.forEach(function(r, idx){
+    setTimeout(function(){
+      var isFinal = r.finalized;
+      var score = isFinal ? r.finalPct : r.provPct;
+      var g = grade(score);
+      var scoreType = isFinal ? '최종 확정 점수' : '가 점수 (잠정)';
+      var answerLink = baseUrl; // 학생이 로그인하면 본인 결과 확인 가능
+
+      sendEmailJS({
+        to_email: r.studentEmail,
+        student_name: r.sname,
+        student_id: r.sid,
+        exam_title: DB.settings.title,
+        prov_score: r.provPct,
+        final_score: isFinal ? r.finalPct+'점' : '(확정 전)',
+        total: r.total,
+        grade: g.g,
+        score_type: scoreType,
+        answer_link: answerLink
+      }, function(ok){
+        if(ok) sent++; else failed++;
+        if(sent+failed===targets.length){
+          alert('발송 완료!\n성공: '+sent+'명\n실패: '+failed+'명');
+        }
+      });
+    }, idx * 500); // 0.5초 간격으로 발송 (API 제한 방지)
+  });
+}
 
 // ── 전체 재채점 ──
 // 정답을 수정한 후 기존 응시자 답안을 새 정답 기준으로 다시 계산
